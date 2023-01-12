@@ -3,7 +3,7 @@ import re
 from django.db import models
 from django.conf import settings
 from django.core.management.base import NoArgsCommand
-from old_req.sorl.thumbnail.main import get_thumbnail_setting
+from sorl.thumbnail.main import get_thumbnail_setting
 
 
 try:

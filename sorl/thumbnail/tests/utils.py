@@ -1,5 +1,5 @@
 from django.conf import settings
-from old_req.sorl.thumbnail.utils import *
+from sorl.thumbnail.utils import *
 
 try:
     set
@@ -9,8 +9,8 @@ except NameError:
 MEDIA_ROOT_LENGTH = len(os.path.normpath(settings.MEDIA_ROOT))
 
 utils_tests = r"""
->>> from old_req.sorl.thumbnail.tests.utils import *
->>> from old_req.sorl.thumbnail.tests.base import ChangeSettings
+>>> from sorl.thumbnail.tests.utils import *
+>>> from sorl.thumbnail.tests.base import ChangeSettings
 >>> from django.conf import settings
 
 >>> change_settings = ChangeSettings()

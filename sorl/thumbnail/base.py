@@ -5,8 +5,8 @@ from shutil import copyfile
 
 from PIL import Image
 
-from old_req.sorl.thumbnail import defaults
-from old_req.sorl.thumbnail.processors import get_valid_options, dynamic_import
+from sorl.thumbnail import defaults
+from sorl.thumbnail.processors import get_valid_options, dynamic_import
 
 
 class ThumbnailException(Exception):

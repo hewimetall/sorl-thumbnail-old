@@ -19,10 +19,10 @@ def all_thumbnails(path, recursive=True, prefix=None, subdir=None):
     # Fall back to using thumbnail settings. These are local imports so that
     # there is no requirement of Django to use the utils module.
     if prefix is None:
-        from old_req.sorl.thumbnail.main import get_thumbnail_setting
+        from sorl.thumbnail.main import get_thumbnail_setting
         prefix = get_thumbnail_setting('PREFIX')
     if subdir is None:
-        from old_req.sorl.thumbnail.main import get_thumbnail_setting
+        from sorl.thumbnail.main import get_thumbnail_setting
         subdir = get_thumbnail_setting('SUBDIR')
     thumbnail_files = {}
     if not path.endswith('/'):
@@ -85,13 +85,13 @@ def thumbnails_for_file(relative_source_path, root=None, basedir=None,
         from django.conf import settings
         root = settings.MEDIA_ROOT
     if prefix is None:
-        from old_req.sorl.thumbnail.main import get_thumbnail_setting
+        from sorl.thumbnail.main import get_thumbnail_setting
         prefix = get_thumbnail_setting('PREFIX')
     if subdir is None:
-        from old_req.sorl.thumbnail.main import get_thumbnail_setting
+        from sorl.thumbnail.main import get_thumbnail_setting
         subdir = get_thumbnail_setting('SUBDIR')
     if basedir is None:
-        from old_req.sorl.thumbnail.main import get_thumbnail_setting
+        from sorl.thumbnail.main import get_thumbnail_setting
         basedir = get_thumbnail_setting('BASEDIR')
     source_dir, filename = os.path.split(relative_source_path)
     thumbs_path = os.path.join(root, basedir, source_dir, subdir)

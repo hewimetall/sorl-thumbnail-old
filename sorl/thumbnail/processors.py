@@ -1,5 +1,5 @@
 from PIL import Image, ImageFilter, ImageChops
-from old_req.sorl.thumbnail import utils
+from sorl.thumbnail import utils
 import re
 
 

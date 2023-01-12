@@ -2,9 +2,9 @@ import re
 import math
 from django.template import Library, Node, VariableDoesNotExist, \
     TemplateSyntaxError
-from old_req.sorl.thumbnail.main import DjangoThumbnail, get_thumbnail_setting
-from old_req.sorl.thumbnail.processors import dynamic_import, get_valid_options
-from old_req.sorl.thumbnail.utils import split_args
+from sorl.thumbnail.main import DjangoThumbnail, get_thumbnail_setting
+from sorl.thumbnail.processors import dynamic_import, get_valid_options
+from sorl.thumbnail.utils import split_args
 
 register = Library()
 

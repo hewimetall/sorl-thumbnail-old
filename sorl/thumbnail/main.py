@@ -3,9 +3,9 @@ import os
 from django.conf import settings
 from django.utils.encoding import iri_to_uri
 
-from old_req.sorl.thumbnail.base import Thumbnail
-from old_req.sorl.thumbnail.processors import dynamic_import
-from old_req.sorl.thumbnail import defaults
+from sorl.thumbnail.base import Thumbnail
+from sorl.thumbnail.processors import dynamic_import
+from sorl.thumbnail import defaults
 
 
 def get_thumbnail_setting(setting, override=None):

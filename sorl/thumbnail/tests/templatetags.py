@@ -1,7 +1,7 @@
 import os
 from django.conf import settings
 from django.template import Template, Context, TemplateSyntaxError
-from old_req.sorl.thumbnail.tests.classes import BaseTest, RELATIVE_PIC_NAME
+from sorl.thumbnail.tests.classes import BaseTest, RELATIVE_PIC_NAME
 
 
 class ThumbnailTagTest(BaseTest):
@@ -156,7 +156,7 @@ class ThumbnailTagTest(BaseTest):
         self.assertEqual(output, 'width:240, url:%s' % expected_url)
 
 filesize_tests = r"""
->>> from old_req.sorl.thumbnail.templatetags.thumbnail import filesize
+>>> from sorl.thumbnail.templatetags.thumbnail import filesize
 
 >>> filesize('abc')
 'abc'
@@ -214,7 +214,7 @@ filesize_tests = r"""
 1024 yobibytes, 1000 yottabytes
 
 # Test all fixed outputs (eg 'kB' or 'MiB')
->>> from old_req.sorl.thumbnail.templatetags.thumbnail import filesize_formats,\
+>>> from sorl.thumbnail.templatetags.thumbnail import filesize_formats,\
 ...    filesize_long_formats
 >>> for f in filesize_formats:
 ...     print '%s (%siB, %sB):' % (filesize_long_formats[f], f.upper(), f)

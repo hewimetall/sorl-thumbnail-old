@@ -9,9 +9,9 @@ from django.core.files.base import ContentFile
 from django.utils.safestring import mark_safe
 from django.utils.html import escape
 
-from old_req.sorl.thumbnail.base import Thumbnail
-from old_req.sorl.thumbnail.main import DjangoThumbnail, build_thumbnail_name
-from old_req.sorl.thumbnail.utils import delete_thumbnails
+from sorl.thumbnail.base import Thumbnail
+from sorl.thumbnail.main import DjangoThumbnail, build_thumbnail_name
+from sorl.thumbnail.utils import delete_thumbnails
 
 
 REQUIRED_ARGS = ('size',)

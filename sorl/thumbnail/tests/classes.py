@@ -6,10 +6,10 @@ from io import StringIO
 from PIL import Image
 from django.conf import settings
 
-from old_req.sorl.thumbnail.base import Thumbnail
-from old_req.sorl.thumbnail.main import DjangoThumbnail, get_thumbnail_setting
-from old_req.sorl.thumbnail.processors import dynamic_import, get_valid_options
-from old_req.sorl.thumbnail.tests.base import BaseTest, RELATIVE_PIC_NAME, PIC_NAME,\
+from sorl.thumbnail.base import Thumbnail
+from sorl.thumbnail.main import DjangoThumbnail, get_thumbnail_setting
+from sorl.thumbnail.processors import dynamic_import, get_valid_options
+from sorl.thumbnail.tests.base import BaseTest, RELATIVE_PIC_NAME, PIC_NAME,\
     THUMB_NAME, PIC_SIZE
 
 

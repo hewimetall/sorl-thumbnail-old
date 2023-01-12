@@ -2,7 +2,7 @@ import unittest
 import os
 from PIL import Image
 from django.conf import settings
-from old_req.sorl.thumbnail.base import Thumbnail
+from sorl.thumbnail.base import Thumbnail
 
 try:
     set
@@ -11,7 +11,7 @@ except NameError:
 
 
 def get_default_settings():
-    from old_req.sorl.thumbnail import defaults
+    from sorl.thumbnail import defaults
     def_settings = {}
     for key in dir(defaults):
         if key == key.upper() and key not in ['WVPS', 'CONVERT']:

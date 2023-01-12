@@ -4,8 +4,8 @@ from django.db import models
 from django.conf import settings
 from django.core.files.base import ContentFile
 
-from old_req.sorl.thumbnail.fields import ImageWithThumbnailsField, ThumbnailField
-from old_req.sorl.thumbnail.tests.base import BaseTest, RELATIVE_PIC_NAME, PIC_NAME
+from sorl.thumbnail.fields import ImageWithThumbnailsField, ThumbnailField
+from sorl.thumbnail.tests.base import BaseTest, RELATIVE_PIC_NAME, PIC_NAME
 
 thumbnail = {
     'size': (50, 50),
