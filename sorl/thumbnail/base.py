@@ -1,204 +1,290 @@
-import logging
 import os
-import re
+from os.path import isfile, isdir, getmtime, dirname, splitext, getsize
+from tempfile import mkstemp
+from shutil import copyfile
 
-from sorl.thumbnail.conf import settings, defaults as default_settings
-from sorl.thumbnail.helpers import tokey, serialize
-from sorl.thumbnail.images import ImageFile, DummyImageFile
-from sorl.thumbnail import default
-from sorl.thumbnail.parsers import parse_geometry
+from PIL import Image
 
-
-logger = logging.getLogger(__name__)
-
-EXTENSIONS = {
-    'JPEG': 'jpg',
-    'PNG': 'png',
-    'GIF': 'gif',
-    'WEBP': 'webp',
-}
+from old_req.sorl.thumbnail import defaults
+from old_req.sorl.thumbnail.processors import get_valid_options, dynamic_import
 
 
-class ThumbnailBackend:
-    """
-    The main class for sorl-thumbnail, you can subclass this if you for example
-    want to change the way destination filename is generated.
-    """
+class ThumbnailException(Exception):
+    # Stop Django templates from choking if something goes wrong.
+    silent_variable_failure = True
 
-    default_options = {
-        'format': settings.THUMBNAIL_FORMAT,
-        'quality': settings.THUMBNAIL_QUALITY,
-        'colorspace': settings.THUMBNAIL_COLORSPACE,
-        'upscale': settings.THUMBNAIL_UPSCALE,
-        'crop': False,
-        'cropbox': None,
-        'rounded': None,
-        'padding': settings.THUMBNAIL_PADDING,
-        'padding_color': settings.THUMBNAIL_PADDING_COLOR,
-    }
 
-    extra_options = (
-        ('progressive', 'THUMBNAIL_PROGRESSIVE'),
-        ('orientation', 'THUMBNAIL_ORIENTATION'),
-        ('blur', 'THUMBNAIL_BLUR'),
-    )
+class Thumbnail(object):
+    imagemagick_file_types = defaults.IMAGEMAGICK_FILE_TYPES
 
-    def file_extension(self, source):
-        return os.path.splitext(source.name)[1].lower()
+    def __init__(self, source, requested_size, opts=None, quality=85,
+                 dest=None, convert_path=defaults.CONVERT,
+                 wvps_path=defaults.WVPS, processors=None):
+        # Paths to external commands
+        self.convert_path = convert_path
+        self.wvps_path = wvps_path
+        # Absolute paths to files
+        self.source = source
+        self.dest = dest
 
-    def _get_format(self, source):
-        file_extension = self.file_extension(source)
-
-        if file_extension == '.jpg' or file_extension == '.jpeg':
-            return 'JPEG'
-        elif file_extension == '.png':
-            return 'PNG'
-        elif file_extension == '.gif':
-            return 'GIF'
-        elif file_extension == '.webp':
-            return 'WEBP'
+        # Thumbnail settings
+        try:
+            x, y = [int(v) for v in requested_size]
+        except (TypeError, ValueError):
+            raise TypeError('Thumbnail received invalid value for size '
+                            'argument: %s' % repr(requested_size))
         else:
-            from django.conf import settings
+            self.requested_size = (x, y)
+        try:
+            self.quality = int(quality)
+            if not 0 < quality <= 100:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise TypeError('Thumbnail received invalid value for quality '
+                            'argument: %r' % quality)
 
-            return getattr(settings, 'THUMBNAIL_FORMAT', default_settings.THUMBNAIL_FORMAT)
+        # Processors
+        if processors is None:
+            processors = dynamic_import(defaults.PROCESSORS)
+        self.processors = processors
 
-    def get_thumbnail(self, file_, geometry_string, **options):
+        # Handle old list format for opts.
+        opts = opts or {}
+        if isinstance(opts, (list, tuple)):
+            opts = dict([(opt, None) for opt in opts])
+
+        # Set Thumbnail opt(ion)s
+        VALID_OPTIONS = get_valid_options(processors)
+        for opt in opts:
+            if not opt in VALID_OPTIONS:
+                raise TypeError('Thumbnail received an invalid option: %s'
+                                % opt)
+        self.opts = opts
+
+        if self.dest is not None:
+            self.generate()
+
+    def generate(self):
         """
-        Returns thumbnail as an ImageFile instance for file with geometry and
-        options given. First it will try to get it from the key value store,
-        secondly it will create it.
+        Generates the thumbnail if it doesn't exist or if the file date of the
+        source file is newer than that of the thumbnail.
         """
-        logger.debug('Getting thumbnail for file [%s] at [%s]', file_, geometry_string)
+        # Ensure dest(ination) attribute is set
+        if not self.dest:
+            raise ThumbnailException("No destination filename set.")
 
-        if file_:
-            source = ImageFile(file_)
-        else:
-            raise ValueError('falsey file_ argument in get_thumbnail()')
+        if not isinstance(self.dest, str):
+            # We'll assume dest is a file-like instance if it exists but isn't
+            # a string.
+            self._do_generate()
+        elif not isfile(self.dest) or (self.source_exists and
+            getmtime(self.source) > getmtime(self.dest)):
 
-        # preserve image filetype
-        if settings.THUMBNAIL_PRESERVE_FORMAT:
-            options.setdefault('format', self._get_format(source))
+            # Ensure the directory exists
+            directory = dirname(self.dest)
+            if directory and not isdir(directory):
+                os.makedirs(directory)
 
-        for key, value in self.default_options.items():
-            options.setdefault(key, value)
+            self._do_generate()
 
-        # For the future I think it is better to add options only if they
-        # differ from the default settings as below. This will ensure the same
-        # filenames being generated for new options at default.
-        for key, attr in self.extra_options:
-            value = getattr(settings, attr)
-            if value != getattr(default_settings, attr):
-                options.setdefault(key, value)
+    def _check_source_exists(self):
+        """
+        Ensure the source file exists. If source is not a string then it is
+        assumed to be a file-like instance which "exists".
+        """
+        if not hasattr(self, '_source_exists'):
+            self._source_exists = (self.source and
+                                   (not isinstance(self.source, str) or
+                                    isfile(self.source)))
+        return self._source_exists
+    source_exists = property(_check_source_exists)
 
-        name = self._get_thumbnail_filename(source, geometry_string, options)
-        thumbnail = ImageFile(name, default.storage)
-        cached = default.kvstore.get(thumbnail)
-
-        if cached:
-            return cached
-
-        # We have to check exists() because the Storage backend does not
-        # overwrite in some implementations.
-        if settings.THUMBNAIL_FORCE_OVERWRITE or not thumbnail.exists():
+    def _get_source_filetype(self):
+        """
+        Set the source filetype. First it tries to use magic and
+        if import error it will just use the extension
+        """
+        if not hasattr(self, '_source_filetype'):
+            if not isinstance(self.source, str):
+                # Assuming a file-like object - we won't know it's type.
+                return None
             try:
-                source_image = default.engine.get_image(source)
-            except Exception as e:
-                logger.exception(e)
-                if settings.THUMBNAIL_DUMMY:
-                    return DummyImageFile(geometry_string)
+                import magic
+            except ImportError:
+                self._source_filetype = splitext(self.source)[1].lower().\
+                   replace('.', '').replace('jpeg', 'jpg')
+            else:
+                if hasattr(magic, 'from_file'):
+                    # Adam Hupp's ctypes-based magic library
+                    ftype = magic.from_file(self.source)
                 else:
-                    # if storage backend says file doesn't exist remotely,
-                    # don't try to create it and exit early.
-                    # Will return working empty image type; 404'd image
-                    logger.warning(
-                        'Remote file [%s] at [%s] does not exist',
-                        file_, geometry_string,
-                    )
-                    return thumbnail
+                    # Brett Funderburg's older python magic bindings
+                    m = magic.open(magic.MAGIC_NONE)
+                    m.load()
+                    ftype = m.file(self.source)
+                if ftype.find('Microsoft Office Document') != -1:
+                    self._source_filetype = 'doc'
+                elif ftype.find('PDF document') != -1:
+                    self._source_filetype = 'pdf'
+                elif ftype.find('JPEG') != -1:
+                    self._source_filetype = 'jpg'
+                else:
+                    self._source_filetype = ftype
+        return self._source_filetype
+    source_filetype = property(_get_source_filetype)
 
-            # We might as well set the size since we have the image in memory
-            image_info = default.engine.get_image_info(source_image)
-            options['image_info'] = image_info
-            size = default.engine.get_image_size(source_image)
-            source.set_size(size)
-
+    # data property is the image data of the (generated) thumbnail
+    def _get_data(self):
+        if not hasattr(self, '_data'):
             try:
-                self._create_thumbnail(source_image, geometry_string, options,
-                                       thumbnail)
-                self._create_alternative_resolutions(source_image, geometry_string,
-                                                     options, thumbnail.name)
-            finally:
-                default.engine.cleanup(source_image)
+                self._data = Image.open(self.dest)
+            except IOError as detail:
+                raise ThumbnailException(detail)
+        return self._data
 
-        # If the thumbnail exists we don't create it, the other option is
-        # to delete and write but this could lead to race conditions so I
-        # will just leave that out for now.
-        default.kvstore.get_or_set(source)
-        default.kvstore.set(thumbnail, source)
-        return thumbnail
+    def _set_data(self, im):
+        self._data = im
+    data = property(_get_data, _set_data)
 
-    def delete(self, file_, delete_file=True):
-        """
-        Deletes file_ references in Key Value store and optionally the file_
-        it self.
-        """
-        image_file = ImageFile(file_)
-        if delete_file:
-            image_file.delete()
-        default.kvstore.delete(image_file)
+    # source_data property is the image data from the source file
+    def _get_source_data(self):
+        if not hasattr(self, '_source_data'):
+            if not self.source_exists:
+                raise ThumbnailException("Source file: '%s' does not exist." %
+                                         self.source)
+            if self.source_filetype == 'doc':
+                self._convert_wvps(self.source)
+            elif self.source_filetype in self.imagemagick_file_types:
+                self._convert_imagemagick(self.source)
+            else:
+                self.source_data = self.source
+        return self._source_data
 
-    def _create_thumbnail(self, source_image, geometry_string, options,
-                          thumbnail):
-        """
-        Creates the thumbnail by using default.engine
-        """
-        logger.debug('Creating thumbnail file [%s] at [%s] with [%s]',
-                     thumbnail.name, geometry_string, options)
-        ratio = default.engine.get_image_ratio(source_image, options)
-        geometry = parse_geometry(geometry_string, ratio)
-        image = default.engine.create(source_image, geometry, options)
-        default.engine.write(image, options, thumbnail)
-        # It's much cheaper to set the size here
-        size = default.engine.get_image_size(image)
-        thumbnail.set_size(size)
+    def _set_source_data(self, image):
+        if isinstance(image, Image.Image):
+            self._source_data = image
+        else:
+            try:
+                self._source_data = Image.open(image)
+            except IOError as detail:
+                raise ThumbnailException("%s: %s" % (detail, image))
+            except MemoryError:
+                raise ThumbnailException("Memory Error: %s" % image)
+    source_data = property(_get_source_data, _set_source_data)
 
-    def _create_alternative_resolutions(self, source_image, geometry_string,
-                                        options, name):
-        """
-        Creates the thumbnail by using default.engine with multiple output
-        sizes.  Appends @<ratio>x to the file name.
-        """
-        ratio = default.engine.get_image_ratio(source_image, options)
-        geometry = parse_geometry(geometry_string, ratio)
-        file_name, dot_file_ext = os.path.splitext(name)
+    def _convert_wvps(self, filename):
+        try:
+            import subprocess
+        except ImportError:
+            raise ThumbnailException('wvps requires the Python 2.4 subprocess '
+                                     'package.')
+        tmp = mkstemp('.ps')[1]
+        try:
+            p = subprocess.Popen((self.wvps_path, filename, tmp),
+                                 stdout=subprocess.PIPE)
+            p.wait()
+        except OSError as detail:
+            os.remove(tmp)
+            raise ThumbnailException('wvPS error: %s' % detail)
+        self._convert_imagemagick(tmp)
+        os.remove(tmp)
 
-        for resolution in settings.THUMBNAIL_ALTERNATIVE_RESOLUTIONS:
-            resolution_geometry = (int(geometry[0] * resolution), int(geometry[1] * resolution))
-            resolution_options = options.copy()
-            if 'crop' in options and isinstance(options['crop'], str):
-                crop = options['crop'].split(" ")
-                for i in range(len(crop)):
-                    s = re.match(r"(\d+)px", crop[i])
-                    if s:
-                        crop[i] = "%spx" % int(int(s.group(1)) * resolution)
-                resolution_options['crop'] = " ".join(crop)
+    def _convert_imagemagick(self, filename):
+        try:
+            import subprocess
+        except ImportError:
+            raise ThumbnailException('imagemagick requires the Python 2.4 '
+                                     'subprocess package.')
+        tmp = mkstemp('.png')[1]
+        if 'crop' in self.opts or 'autocrop' in self.opts:
+            x, y = [d * 3 for d in self.requested_size]
+        else:
+            x, y = self.requested_size
+        try:
+            p = subprocess.Popen((self.convert_path, '-size', '%sx%s' % (x, y),
+                '-antialias', '-colorspace', 'rgb', '-format', 'PNG24',
+                '%s[0]' % filename, tmp), stdout=subprocess.PIPE)
+            p.wait()
+        except OSError as detail:
+            os.remove(tmp)
+            raise ThumbnailException('ImageMagick error: %s' % detail)
+        self.source_data = tmp
+        os.remove(tmp)
 
-            image = default.engine.create(source_image, resolution_geometry, options)
-            thumbnail_name = '%(file_name)s%(suffix)s%(file_ext)s' % {
-                'file_name': file_name,
-                'suffix': '@%sx' % resolution,
-                'file_ext': dot_file_ext
-            }
-            thumbnail = ImageFile(thumbnail_name, default.storage)
-            default.engine.write(image, resolution_options, thumbnail)
-            size = default.engine.get_image_size(image)
-            thumbnail.set_size(size)
+    def _do_generate(self):
+        """
+        Generates the thumbnail image.
 
-    def _get_thumbnail_filename(self, source, geometry_string, options):
+        This a semi-private method so it isn't directly available to template
+        authors if this object is passed to the template context.
         """
-        Computes the destination filename.
-        """
-        key = tokey(source.key, geometry_string, serialize(options))
-        # make some subdirs
-        path = '%s/%s/%s' % (key[:2], key[2:4], key)
-        return '%s%s.%s' % (settings.THUMBNAIL_PREFIX, path, EXTENSIONS[options['format']])
+        im = self.source_data
+
+        for processor in self.processors:
+            im = processor(im, self.requested_size, self.opts)
+
+        self.data = im
+
+        filelike = not isinstance(self.dest, str)
+        if not filelike:
+            dest_extension = os.path.splitext(self.dest)[1][1:]
+            format = None
+        else:
+            dest_extension = None
+            format = 'JPEG'
+        if (self.source_filetype and self.source_filetype == dest_extension and
+                self.source_data == self.data):
+            copyfile(self.source, self.dest)
+        else:
+            try:
+                im.save(self.dest, format=format, quality=self.quality,
+                        optimize=1)
+            except IOError:
+                # Try again, without optimization (PIL can't optimize an image
+                # larger than ImageFile.MAXBLOCK, which is 64k by default)
+                try:
+                    im.save(self.dest, format=format, quality=self.quality)
+                except IOError as detail:
+                    raise ThumbnailException(detail)
+
+        if filelike:
+            self.dest.seek(0)
+
+    # Some helpful methods
+
+    def _dimension(self, axis):
+        if self.dest is None:
+            return None
+        return self.data.size[axis]
+
+    def width(self):
+        return self._dimension(0)
+
+    def height(self):
+        return self._dimension(1)
+
+    def _get_filesize(self):
+        if self.dest is None:
+            return None
+        if not hasattr(self, '_filesize'):
+            self._filesize = getsize(self.dest)
+        return self._filesize
+    filesize = property(_get_filesize)
+
+    def _source_dimension(self, axis):
+        if self.source_filetype in ['pdf', 'doc']:
+            return None
+        else:
+            return self.source_data.size[axis]
+
+    def source_width(self):
+        return self._source_dimension(0)
+
+    def source_height(self):
+        return self._source_dimension(1)
+
+    def _get_source_filesize(self):
+        if not hasattr(self, '_source_filesize'):
+            self._source_filesize = getsize(self.source)
+        return self._source_filesize
+    source_filesize = property(_get_source_filesize)
